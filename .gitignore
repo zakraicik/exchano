@@ -1,0 +1,25 @@
+# Node-related files
+node_modules/
+dist/
+.env
+
+# Python-related files
+__pycache__/
+*.py[cod]
+.Python
+env/
+venv/
+
+# Solidity-specific files
+artifacts/
+cache/
+*.sol.js
+coverage/
+coverage.json
+gas-report.json
+
+# General files
+.DS_Store
+.idea/
+.vscode/
+*.log
