@@ -2,6 +2,7 @@ const {
   loadFixture
 } = require('@nomicfoundation/hardhat-toolbox/network-helpers')
 const { expect } = require('chai')
+const { ethers } = require('hardhat')
 const { bigint } = require('hardhat/internal/core/params/argumentTypes')
 
 describe('TokenFlow', function () {
@@ -72,6 +73,11 @@ describe('TokenFlow', function () {
 
       expect(tokenFlowABalance).to.equal(0)
       expect(tokenFlowBalance).to.equal(0)
+    })
+    it('Should fail to deploy with zero address as feeCollector', async function () {
+      await expect(
+        ethers.deployContract('TokenFlow', [ethers.ZeroAddress, feeRate])
+      ).to.be.revertedWith('Invalid feeCollector address')
     })
   })
 
@@ -264,6 +270,19 @@ describe('TokenFlow', function () {
       expect(await tokenB.balanceOf(feeCollectorontractAddress)).to.equal(
         initialFeeCollectorBalanceB + expectedFee
       )
+    })
+    it('Should fail swap if transferFrom fails due to insufficient approval', async function () {
+      const { tokenA, tokenB, tokenFlow, addr1 } = await loadFixture(
+        deployTokenFlowFixture
+      )
+
+      const tokenFlowContractAddress = await tokenFlow.getAddress()
+      const tokenAAddress = await tokenA.getAddress()
+      const tokenBAddress = await tokenB.getAddress()
+
+      await expect(
+        tokenFlow.connect(addr1).swap(tokenAAddress, tokenBAddress, swapA)
+      ).to.be.reverted
     })
   })
 

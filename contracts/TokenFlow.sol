@@ -18,6 +18,7 @@ contract TokenFlow {
     address public feeCollector;
 
     constructor(address _feeCollector, uint256 _feeRate) {
+        require(_feeCollector != address(0), "Invalid feeCollector address");
         feeCollector = _feeCollector;
         owner = msg.sender;
         feeRate = _feeRate;
