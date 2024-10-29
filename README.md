@@ -18,155 +18,156 @@ A separate contract managing fee accumulation and distribution to liquidity prov
 
 ERC20 tokens representing liquidity provider shares in pools.
 
-## Key Features
+## Liquidity Management
 
-### Trading
+### Initial Liquidity Provision
 
-- Automated Market Making using constant product formula
-- Configurable trading fees (up to 10%)
-- Slippage protection
-- Same-block protection against manipulation
+When a new pool is created:
 
-### Liquidity Provision
+1. First depositor sets the initial price ratio between tokens
+2. Liquidity tokens minted = sqrt(amountA \* amountB) - MINIMUM_LIQUIDITY
+3. MINIMUM_LIQUIDITY (1000) tokens are permanently locked by sending to address(1)
+4. Initial depositor receives remaining LP tokens
 
-- Add liquidity to create new pools or join existing ones
-- Withdraw liquidity with underlying assets
-- Minimum liquidity lock to prevent precision issues
-- LP tokens represent pool shares
+### Subsequent Liquidity Additions
 
-### Fee System
+For subsequent deposits:
 
-- Fees collected only on input tokens during swaps
-- Fee distribution based on highest pool share
-- Proportional share calculation using basis points (1/10000)
+1. LP tokens minted = min((dx _ L) / X, (dy _ L) / Y)
+   - dx, dy: amounts of tokens being added
+   - L: total supply of LP tokens
+   - X, Y: current pool balances
+2. Must maintain the existing pool ratio to prevent value loss
 
-## Core Mechanics
+### Minimum Liquidity Mechanism
 
-### Pool Creation
+- Purpose: Prevents precision loss and division by zero
+- Amount: 1000 LP tokens (MINIMUM_LIQUIDITY constant)
+- Implementation:
+  - Locked permanently in first deposit
+  - Cannot be withdrawn
+  - Ensures pool always has some baseline liquidity
+  - Protects against mathematical edge cases
 
-```solidity
-function addLiquidity(
-    address tokenA,
-    address tokenB,
-    uint256 amountA,
-    uint256 amountB,
-    uint256 minLPTokens
-) external returns (uint256 liquidityShare)
-```
+### Share Calculation
 
-- First liquidity provider sets the initial price
-- Minimum liquidity locked forever
-- LP tokens minted proportional to contribution
+1. Within Single Pool:
 
-### Trading
+   ```
+   userShare = userLPBalance / totalLPSupply
+   ```
 
-```solidity
-function swap(
-    address tokenIn,
-    address tokenOut,
-    uint256 amountIn,
-    uint256 minAmountOut
-) external returns (uint256 amountOut)
-```
+   - Includes MINIMUM_LIQUIDITY in totalLPSupply
+   - Actual share slightly lower due to locked minimum
 
-- Uses constant product formula: (x + Δx)(y - Δy) = xy
-- Fees deducted from input amount
-- Fees sent to FeeCollector
-- Updates LP shares in fee collector for the input token
+2. Across Multiple Pools:
+   ```
+   effectiveShare = highestShareAcrossPoolsWithToken * BASIS_POINTS
+   ```
+   - BASIS_POINTS = 10000 (100%)
+   - Prevents share dilution across pools
 
-### Fee Distribution
+### Liquidity Removal
 
-```solidity
-function withdrawFees(
-    address token
-) external
-```
+1. Calculate token amounts:
+   ```
+   tokenAmount = (lpTokensBurned * poolBalance) / totalLPSupply
+   ```
+2. Burn LP tokens
+3. Transfer underlying tokens
+4. Update fee collector shares
 
-- Users can withdraw fees for any token they've provided liquidity for
-- Share calculation based on highest ownership percentage across all pools containing the token
-- Prevents double-counting of shares across multiple pools
+### Impact of Minimum Liquidity
 
-## Share Calculation Example
+#### Mathematical Impact
 
-1. User has LP tokens in two pools:
-   - USDC/ETH pool: 20% of pool
-   - USDC/DAI pool: 15% of pool
-2. When withdrawing USDC fees, user receives based on 20% share (highest across pools)
+- Actual user share = userLPBalance / (totalLPSupply + MINIMUM_LIQUIDITY)
+- Example:
+  - User deposits 100,000 of each token
+  - LP tokens minted ≈ 99,000 (100,000 - 1,000)
+  - Initial share ≈ 99% instead of 100%
 
-## Security Features
+#### Pool Operations
 
-### Access Control
+1. New Pool Creation:
 
-- `onlyOwner`: Administrative functions
-- `nonReentrant`: Prevents reentrancy attacks
-- `whenNotPaused`: Emergency stop capability
+   - Must deposit enough to generate > MINIMUM_LIQUIDITY tokens
+   - Initial price ratio remains intact
+   - Small portion of value locked permanently
 
-### Safety Measures
+2. Trading:
 
-- Slippage protection in swaps and liquidity removal
-- Same-block protection against manipulation
-- Checks-effects-interactions pattern
-- Two-step ownership transfers
+   - Minimum liquidity ensures k > 0
+   - Prevents extreme price manipulation
+   - Maintains reasonable slippage bounds
 
-## Events
+3. Full Withdrawal:
+   - Cannot remove 100% of liquidity
+   - MINIMUM_LIQUIDITY tokens remain
+   - Pool remains functional with baseline liquidity
 
-```solidity
-event LiquidityAdded(address user, address tokenA, address tokenB, uint256 amountA, uint256 amountB, uint256 lpTokensMinted);
-event LiquidityRemoved(address user, address tokenA, address tokenB, uint256 amountA, uint256 amountB, uint256 lpTokensBurned);
-event Swap(address user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
-event FeesWithdrawn(address user, address token, uint256 amount);
-```
+## Fee Distribution with Liquidity Shares
 
-## Constants
+### Fee Accumulation
 
-```solidity
-MAX_FEE_RATE = 1000     // 10% maximum fee
-MINIMUM_LIQUIDITY = 1000 // Locked liquidity
-BASIS_POINTS = 10000     // Share calculation denominator
-```
+1. Trading fees collected in input token
+2. Sent to FeeCollector contract
+3. Tracked per token, not per pool
 
-## Integration Guide
+### Share Updates
 
-### Adding Liquidity
+1. Triggered on:
+   - Liquidity addition
+   - Liquidity removal
+   - Pool rebalancing
+2. Formula:
+   ```solidity
+   newShareBasisPoints = (userLPBalance * BASIS_POINTS) / totalLPSupply
+   ```
 
-1. Approve token transfers to Exchano contract
-2. Call addLiquidity with desired amounts
-3. Receive LP tokens representing pool share
+### Fee Withdrawal Process
 
-### Trading
-
-1. Approve tokenIn transfer to Exchano contract
-2. Calculate minimum output amount (slippage tolerance)
-3. Call swap function
-
-### Collecting Fees
-
-1. Accumulate fees by providing liquidity
-2. Call withdrawFees for specific token
-3. Receive proportional share of collected fees
-
-## Error Handling
-
-The contract includes comprehensive error messages for common failure cases:
-
-- Insufficient liquidity
-- Slippage tolerance exceeded
-- Invalid token addresses
-- Insufficient balances
-- Zero amount transfers
+1. Calculate highest share across all pools with token
+2. Apply share to total accumulated fees
+3. Reset user's accumulator
+4. Transfer fees to user
 
 ## Security Considerations
 
-- No external calls in core functions except token transfers
-- Reentrancy protection on all state-modifying functions
-- Pause mechanism for emergency situations
-- Mathematical operations protected against overflow
-- Share calculations protected against manipulation
+### Share Manipulation Protection
 
-## Upgradeability
+- Same-block protection prevents flash loan attacks
+- Minimum liquidity prevents share inflation
+- Basis points system prevents precision loss
 
-The contract is not upgradeable. Any changes require deployment of a new version and migration of liquidity.
+### Share Calculation Safety
 
-## License
+- SafeMath for overflow protection
+- Proper decimal handling
+- Non-reentrant fee withdrawals
 
-MIT License
+## Example Scenarios
+
+### Single Pool
+
+```
+Initial Deposit:
+- Deposit: 100,000 tokens each
+- LP tokens: 99,000 (100,000 - MINIMUM_LIQUIDITY)
+- Share: 99%
+
+Second Deposit:
+- Deposit: 50,000 tokens each
+- LP tokens: ≈ 49,500
+- New share distribution: 66.6% : 33.3%
+```
+
+### Multiple Pools
+
+```
+User has:
+- Pool A: 30% share (Token X/Y)
+- Pool B: 20% share (Token Y/Z)
+When withdrawing Token Y fees:
+- Effective share = 30% (highest share)
+```
