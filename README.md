@@ -1,173 +1,336 @@
 # Exchano Protocol
 
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Core Components](#core-components)
+3. [Protocol Mechanics](#protocol-mechanics)
+4. [Pool Management](#pool-management)
+5. [Trading Mechanics](#trading-mechanics)
+6. [Fee System](#fee-system)
+7. [Security Features](#security-features)
+8. [Mathematical Formulas](#mathematical-formulas)
+9. [Example Scenarios](#example-scenarios)
+
 ## Overview
 
-Exchano is a decentralized exchange protocol implementing an automated market maker (AMM) with constant product formula (x \* y = k) and a unique fee distribution system. The protocol enables token swaps, liquidity provision, and proportional fee sharing among liquidity providers.
+Exchano is a decentralized exchange protocol implementing an automated market maker (AMM) with constant product formula (x \* y = k). It features:
+
+- Multi-pool token swapping
+- Proportional fee distribution
+- Advanced liquidity provider incentives
+- Permanent minimum liquidity mechanism
+- Cross-pool fee sharing
 
 ## Core Components
 
 ### 1. Exchange Contract (Exchano.sol)
 
-The main contract handling swaps, liquidity provision, and fee collection.
+- Primary contract handling:
+  - Token swaps
+  - Liquidity provision/removal
+  - Fee collection
+  - Pool initialization
+  - Share calculations
+- Implements constant product formula
+- Manages LP token minting/burning
+- Controls pool parameters
 
 ### 2. Fee Collector Contract (FeeCollector.sol)
 
-A separate contract managing fee accumulation and distribution to liquidity providers.
+- Dedicated fee management contract
+- Responsibilities:
+  - Fee accumulation per token
+  - Share tracking per user
+  - Fee distribution
+  - Cross-pool share calculations
+- Features:
+  - Non-reentrant withdrawals
+  - Same-block protection
+  - Owner-only recovery function
 
 ### 3. LP Token Contract (LPToken.sol)
 
-ERC20 tokens representing liquidity provider shares in pools.
+- Standard ERC20 implementation
+- Represents pool shares
+- Minted/burned by main contract
+- Used for fee share calculations
 
-## Liquidity Management
+## Protocol Mechanics
 
-### Initial Liquidity Provision
+### Constants and Parameters
 
-When a new pool is created:
+```solidity
+MAX_FEE_RATE = 1000         // 10% maximum fee (basis points)
+MINIMUM_LIQUIDITY = 1000     // Minimum locked liquidity
+BASIS_POINTS = 10000         // Precision for calculations
+```
 
-1. First depositor sets the initial price ratio between tokens
-2. Liquidity tokens minted = sqrt(amountA \* amountB) - MINIMUM_LIQUIDITY
-3. MINIMUM_LIQUIDITY (1000) tokens are permanently locked by sending to address(1)
-4. Initial depositor receives remaining LP tokens
+### Pool Initialization Process
 
-### Subsequent Liquidity Additions
+1. First deposit triggers pool creation
+2. LP token contract deployed with unique name/symbol
+3. Minimum liquidity locked permanently
+4. Initial price ratio established
 
-For subsequent deposits:
+### Liquidity Provider Mechanics
 
-1. LP tokens minted = min((dx _ L) / X, (dy _ L) / Y)
-   - dx, dy: amounts of tokens being added
-   - L: total supply of LP tokens
-   - X, Y: current pool balances
-2. Must maintain the existing pool ratio to prevent value loss
+#### First Provider:
 
-### Minimum Liquidity Mechanism
+1. Deposits tokens A and B
+2. LP tokens minted = sqrt(amountA \* amountB) - MINIMUM_LIQUIDITY
+3. Sets initial exchange rate
+4. MINIMUM_LIQUIDITY tokens locked at address(1)
 
-- Purpose: Prevents precision loss and division by zero
-- Amount: 1000 LP tokens (MINIMUM_LIQUIDITY constant)
-- Implementation:
-  - Locked permanently in first deposit
-  - Cannot be withdrawn
-  - Ensures pool always has some baseline liquidity
-  - Protects against mathematical edge cases
+#### Subsequent Providers:
+
+1. Must match current pool ratio
+2. LP tokens minted = min((dx _ L) / X, (dy _ L) / Y)
+   - dx, dy: deposit amounts
+   - L: total LP supply
+   - X, Y: pool balances
+3. Share updated in fee collector
+
+## Pool Management
+
+### Pool State
+
+```solidity
+struct Pool {
+    uint256 totalLiquidity;      // Total tokens locked
+    LPToken lpToken;             // LP token contract
+    uint256 tokenABalance;       // Balance of token A
+    uint256 tokenBBalance;       // Balance of token B
+    uint256 lastBlockUpdated;    // Anti-flash loan protection
+    bool isInitialized;          // Pool existence flag
+}
+```
+
+### Liquidity Management
+
+#### Adding Liquidity
+
+```solidity
+function addLiquidity(
+    address tokenA,
+    address tokenB,
+    uint256 amountA,
+    uint256 amountB,
+    uint256 minLPTokens
+) external returns (uint256)
+```
+
+Process:
+
+1. Validate inputs and pool state
+2. Calculate optimal amounts
+3. Transfer tokens
+4. Mint LP tokens
+5. Update shares
+6. Emit events
+
+#### Removing Liquidity
+
+```solidity
+function withdrawLiquidity(
+    address tokenA,
+    address tokenB,
+    uint256 lpTokenAmount,
+    uint256 minAmountA,
+    uint256 minAmountB
+) external
+```
+
+Process:
+
+1. Calculate token amounts
+2. Burn LP tokens
+3. Transfer tokens
+4. Update shares
+5. Emit events
+
+## Trading Mechanics
+
+### Swap Function
+
+```solidity
+function swap(
+    address tokenIn,
+    address tokenOut,
+    uint256 amountIn,
+    uint256 minAmountOut
+) external returns (uint256)
+```
+
+### Swap Process
+
+1. Validate inputs
+2. Calculate output amount using formula:
+   ```
+   amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+   ```
+3. Apply fees:
+   ```
+   amountInWithFee = amountIn * (BASIS_POINTS - feeRate)
+   ```
+4. Verify k value:
+   ```
+   require(newK >= oldK, "k value protection")
+   ```
+5. Update balances
+6. Transfer tokens
+7. Process fees
+
+### Price Impact Protection
+
+- Minimum output amount check
+- K-value verification
+- Slippage tolerance
+- Reserve checks
+
+## Fee System
+
+### Fee Collection
+
+1. Fees collected in input token
+2. Percentage defined by feeRate (max 10%)
+3. Sent to FeeCollector contract
+4. Accumulated per token
 
 ### Share Calculation
 
-1. Within Single Pool:
+```solidity
+userShare = (userLPBalance * BASIS_POINTS) / totalLPSupply
+```
 
+### Fee Distribution
+
+1. Users claim fees per token
+2. Highest share across pools used
+3. Fees calculated:
    ```
-   userShare = userLPBalance / totalLPSupply
-   ```
-
-   - Includes MINIMUM_LIQUIDITY in totalLPSupply
-   - Actual share slightly lower due to locked minimum
-
-2. Across Multiple Pools:
-   ```
-   effectiveShare = highestShareAcrossPoolsWithToken * BASIS_POINTS
-   ```
-   - BASIS_POINTS = 10000 (100%)
-   - Prevents share dilution across pools
-
-### Liquidity Removal
-
-1. Calculate token amounts:
-   ```
-   tokenAmount = (lpTokensBurned * poolBalance) / totalLPSupply
-   ```
-2. Burn LP tokens
-3. Transfer underlying tokens
-4. Update fee collector shares
-
-### Impact of Minimum Liquidity
-
-#### Mathematical Impact
-
-- Actual user share = userLPBalance / (totalLPSupply + MINIMUM_LIQUIDITY)
-- Example:
-  - User deposits 100,000 of each token
-  - LP tokens minted ≈ 99,000 (100,000 - 1,000)
-  - Initial share ≈ 99% instead of 100%
-
-#### Pool Operations
-
-1. New Pool Creation:
-
-   - Must deposit enough to generate > MINIMUM_LIQUIDITY tokens
-   - Initial price ratio remains intact
-   - Small portion of value locked permanently
-
-2. Trading:
-
-   - Minimum liquidity ensures k > 0
-   - Prevents extreme price manipulation
-   - Maintains reasonable slippage bounds
-
-3. Full Withdrawal:
-   - Cannot remove 100% of liquidity
-   - MINIMUM_LIQUIDITY tokens remain
-   - Pool remains functional with baseline liquidity
-
-## Fee Distribution with Liquidity Shares
-
-### Fee Accumulation
-
-1. Trading fees collected in input token
-2. Sent to FeeCollector contract
-3. Tracked per token, not per pool
-
-### Share Updates
-
-1. Triggered on:
-   - Liquidity addition
-   - Liquidity removal
-   - Pool rebalancing
-2. Formula:
-   ```solidity
-   newShareBasisPoints = (userLPBalance * BASIS_POINTS) / totalLPSupply
+   userFees = (totalFees * shareInBasisPoints) / BASIS_POINTS
    ```
 
-### Fee Withdrawal Process
+### Cross-Pool Fee Sharing
 
-1. Calculate highest share across all pools with token
-2. Apply share to total accumulated fees
-3. Reset user's accumulator
-4. Transfer fees to user
+- Track shares across all pools
+- Use highest share for withdrawals
+- Update shares on liquidity changes
+- Prevent double-counting
 
-## Security Considerations
+## Security Features
 
-### Share Manipulation Protection
+### Anti-Flash Loan Protection
 
-- Same-block protection prevents flash loan attacks
-- Minimum liquidity prevents share inflation
-- Basis points system prevents precision loss
+- Same block protection
+- K-value verification
+- Minimum liquidity lock
 
-### Share Calculation Safety
+### Share Manipulation Prevention
 
-- SafeMath for overflow protection
-- Proper decimal handling
-- Non-reentrant fee withdrawals
+- Non-reentrant functions
+- Share updates per block
+- Maximum share checks
+
+### Value Protection
+
+- Minimum output amounts
+- Slippage checks
+- Balance verifications
+
+## Mathematical Formulas
+
+### Constant Product Formula
+
+```
+x * y = k
+(x + Δx) * (y - Δy) = k
+```
+
+### LP Token Minting
+
+First provider:
+
+```
+tokens = sqrt(amountA * amountB) - MINIMUM_LIQUIDITY
+```
+
+Subsequent providers:
+
+```
+tokens = min((amountA * totalSupply) / reserveA,
+            (amountB * totalSupply) / reserveB)
+```
+
+### Output Amount Calculation
+
+```
+amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+```
+
+### Fee Calculation
+
+```
+fee = amountIn * feeRate / BASIS_POINTS
+effectiveInput = amountIn - fee
+```
 
 ## Example Scenarios
 
-### Single Pool
+### Liquidity Provision Example
 
 ```
-Initial Deposit:
-- Deposit: 100,000 tokens each
-- LP tokens: 99,000 (100,000 - MINIMUM_LIQUIDITY)
-- Share: 99%
+Initial State:
+- Empty pool
+- User deposits: 100,000 tokenA, 200,000 tokenB
+- LP tokens = sqrt(100,000 * 200,000) - 1,000 = 140,421
+- User share = 140,421 / 141,421 ≈ 99.29%
 
-Second Deposit:
-- Deposit: 50,000 tokens each
-- LP tokens: ≈ 49,500
-- New share distribution: 66.6% : 33.3%
+Second Provider:
+- Pool: 100,000 tokenA, 200,000 tokenB
+- Deposits: 50,000 tokenA, 100,000 tokenB
+- LP tokens = min(
+    (50,000 * 141,421) / 100,000,
+    (100,000 * 141,421) / 200,000
+  ) = 70,710
+- New shares: 66.5% : 33.5%
 ```
 
-### Multiple Pools
+### Trading Example
 
 ```
-User has:
-- Pool A: 30% share (Token X/Y)
-- Pool B: 20% share (Token Y/Z)
-When withdrawing Token Y fees:
-- Effective share = 30% (highest share)
+Pool State:
+- 100,000 tokenA
+- 200,000 tokenB
+- K = 20,000,000,000
+
+Trade:
+- Input: 1,000 tokenA
+- Fee: 10 tokenA (1%)
+- Effective input: 990 tokenA
+- Output = (990 * 200,000) / (100,000 + 990) ≈ 1,960 tokenB
 ```
+
+### Fee Distribution Example
+
+```
+User Positions:
+- Pool A (Token X/Y): 30% share
+- Pool B (Token Y/Z): 20% share
+- Pool C (Token Y/W): 25% share
+
+Fee Withdrawal for Token Y:
+- Highest share: 30% (Pool A)
+- Accumulated fees: 1,000 Token Y
+- User receives: 300 Token Y
+```
+
+### Managing Multiple Pools
+
+- Share updates in all pools
+- K-value maintained independently
+- Fees collected per token
+- Shares tracked per user per token
+
+This documentation aims to provide a comprehensive understanding of the Exchano protocol mechanics. For implementation details, please refer to the source code and comments in the respective contract files.
