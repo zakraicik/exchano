@@ -1,40 +1,48 @@
 # Exchano Protocol
 
-Exchano is a decentralized exchange protocol implementing an Automated Market Maker (AMM) model with liquidity pools. The protocol enables permissionless trading of ERC20 tokens while incentivizing liquidity providers through trading fees.
+## Overview
+
+Exchano is a decentralized exchange protocol implementing an automated market maker (AMM) with constant product formula (x \* y = k) and a unique fee distribution system. The protocol enables token swaps, liquidity provision, and proportional fee sharing among liquidity providers.
+
+## Core Components
+
+### 1. Exchange Contract (Exchano.sol)
+
+The main contract handling swaps, liquidity provision, and fee collection.
+
+### 2. Fee Collector Contract (FeeCollector.sol)
+
+A separate contract managing fee accumulation and distribution to liquidity providers.
+
+### 3. LP Token Contract (LPToken.sol)
+
+ERC20 tokens representing liquidity provider shares in pools.
+
+## Key Features
+
+### Trading
+
+- Automated Market Making using constant product formula
+- Configurable trading fees (up to 10%)
+- Slippage protection
+- Same-block protection against manipulation
+
+### Liquidity Provision
+
+- Add liquidity to create new pools or join existing ones
+- Withdraw liquidity with underlying assets
+- Minimum liquidity lock to prevent precision issues
+- LP tokens represent pool shares
+
+### Fee System
+
+- Fees collected only on input tokens during swaps
+- Fee distribution based on highest pool share
+- Proportional share calculation using basis points (1/10000)
 
 ## Core Mechanics
 
-### Liquidity Pools
-
-- Each pool consists of a pair of ERC20 tokens
-- Pools maintain a constant product formula (x \* y = k)
-- Minimum liquidity is locked forever to prevent the first LP from draining the pool
-- Each pool has its own LP token representing proportional ownership
-
-### LP Tokens
-
-- Minted when liquidity is added to a pool
-- Can be burned to withdraw underlying assets
-- LP token name format: "Exchano LP Token [Token A Address]/[Token B Address]"
-- LP token symbol format: "ELP-[Token A Address]-[Token B Address]"
-
-### Trading Mechanics
-
-- Uses constant product formula (x \* y = k)
-- Includes slippage protection via minimum output amounts
-- Same-block trading protection to prevent sandwich attacks
-- Trading fees are collected in the input token
-
-### Fee Structure
-
-- Configurable fee rate (maximum 10% or 1000 basis points)
-- Fees are collected in the input token during swaps
-- Fees are sent to a fee collector contract
-- LP token holders can withdraw their proportional share of fees
-
-## Core Functions
-
-### Adding Liquidity
+### Pool Creation
 
 ```solidity
 function addLiquidity(
@@ -47,26 +55,8 @@ function addLiquidity(
 ```
 
 - First liquidity provider sets the initial price
-- Subsequent providers must add proportional amounts
-- Minimum LP tokens parameter protects against front-running
-- Returns LP tokens representing pool share
-
-### Removing Liquidity
-
-```solidity
-function withdrawLiquidity(
-    address tokenA,
-    address tokenB,
-    uint256 lpTokenAmount,
-    uint256 minAmountA,
-    uint256 minAmountB
-) external
-```
-
-- Burns LP tokens to withdraw underlying assets
-- Proportional withdrawal based on pool share
-- Includes slippage protection via minimum amounts
-- Updates pool balances accordingly
+- Minimum liquidity locked forever
+- LP tokens minted proportional to contribution
 
 ### Trading
 
@@ -79,106 +69,104 @@ function swap(
 ) external returns (uint256 amountOut)
 ```
 
-- Swaps one token for another using the constant product formula
-- Includes slippage protection via minimum output
-- Collects trading fees in input token
-- Returns actual output amount
+- Uses constant product formula: (x + Δx)(y - Δy) = xy
+- Fees deducted from input amount
+- Fees sent to FeeCollector
+- Updates LP shares in fee collector for the input token
 
-### Fee Collection
+### Fee Distribution
 
 ```solidity
 function withdrawFees(
-    address token,
-    uint256 amount
+    address token
 ) external
 ```
 
-- LP token holders can withdraw their share of collected fees
-- Share is proportional to LP token holdings
-- Fees are withdrawn from the fee collector contract
+- Users can withdraw fees for any token they've provided liquidity for
+- Share calculation based on highest ownership percentage across all pools containing the token
+- Prevents double-counting of shares across multiple pools
+
+## Share Calculation Example
+
+1. User has LP tokens in two pools:
+   - USDC/ETH pool: 20% of pool
+   - USDC/DAI pool: 15% of pool
+2. When withdrawing USDC fees, user receives based on 20% share (highest across pools)
 
 ## Security Features
 
-1. **Reentrancy Protection**
+### Access Control
 
-   - All external functions use ReentrancyGuard
-   - Uses checks-effects-interactions pattern
+- `onlyOwner`: Administrative functions
+- `nonReentrant`: Prevents reentrancy attacks
+- `whenNotPaused`: Emergency stop capability
 
-2. **Slippage Protection**
+### Safety Measures
 
-   - Minimum output amounts for swaps
-   - Minimum LP tokens for liquidity provision
-   - Minimum token amounts for liquidity withdrawal
-
-3. **Flash Loan Prevention**
-
-   - Same block trading protection
-   - Constant product (k) value protection
-
-4. **Safe Token Transfers**
-
-   - Uses OpenZeppelin's SafeERC20
-   - Handles non-standard ERC20 implementations
-
-5. **Access Control**
-   - Owner can only update fee rates and collector address
-   - Two-step ownership transfer process
+- Slippage protection in swaps and liquidity removal
+- Same-block protection against manipulation
+- Checks-effects-interactions pattern
+- Two-step ownership transfers
 
 ## Events
 
-The protocol emits events for all major actions:
-
-- `LiquidityAdded`
-- `LiquidityRemoved`
-- `Swap`
-- `FeesWithdrawn`
-- `FeeCollectorUpdated`
-- `FeeRateUpdated`
-- `PoolInitialized`
-
-## Dependencies
-
-The protocol relies on several OpenZeppelin contracts:
-
-- `@openzeppelin/contracts/token/ERC20/IERC20.sol`
-- `@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol`
-- `@openzeppelin/contracts/utils/math/Math.sol`
-- `@openzeppelin/contracts/utils/ReentrancyGuard.sol`
-- `@openzeppelin/contracts/access/Ownable2Step.sol`
-
-## Installation and Usage
-
-1. Install dependencies:
-
-```bash
-npm install @openzeppelin/contracts
+```solidity
+event LiquidityAdded(address user, address tokenA, address tokenB, uint256 amountA, uint256 amountB, uint256 lpTokensMinted);
+event LiquidityRemoved(address user, address tokenA, address tokenB, uint256 amountA, uint256 amountB, uint256 lpTokensBurned);
+event Swap(address user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
+event FeesWithdrawn(address user, address token, uint256 amount);
 ```
 
-2. Deploy FeeCollector contract first
+## Constants
 
-3. Deploy Exchano contract with:
-
-   - Fee collector address
-   - Initial fee rate (in basis points)
-
-4. Interact with the contract through the provided functions
-
-## Testing
-
-Comprehensive tests are provided covering:
-
-- Deployment scenarios
-- Liquidity provision and removal
-- Trading mechanics
-- Fee collection
-- Edge cases and error conditions
-
-Run tests:
-
-```bash
-npx hardhat test
+```solidity
+MAX_FEE_RATE = 1000     // 10% maximum fee
+MINIMUM_LIQUIDITY = 1000 // Locked liquidity
+BASIS_POINTS = 10000     // Share calculation denominator
 ```
+
+## Integration Guide
+
+### Adding Liquidity
+
+1. Approve token transfers to Exchano contract
+2. Call addLiquidity with desired amounts
+3. Receive LP tokens representing pool share
+
+### Trading
+
+1. Approve tokenIn transfer to Exchano contract
+2. Calculate minimum output amount (slippage tolerance)
+3. Call swap function
+
+### Collecting Fees
+
+1. Accumulate fees by providing liquidity
+2. Call withdrawFees for specific token
+3. Receive proportional share of collected fees
+
+## Error Handling
+
+The contract includes comprehensive error messages for common failure cases:
+
+- Insufficient liquidity
+- Slippage tolerance exceeded
+- Invalid token addresses
+- Insufficient balances
+- Zero amount transfers
+
+## Security Considerations
+
+- No external calls in core functions except token transfers
+- Reentrancy protection on all state-modifying functions
+- Pause mechanism for emergency situations
+- Mathematical operations protected against overflow
+- Share calculations protected against manipulation
+
+## Upgradeability
+
+The contract is not upgradeable. Any changes require deployment of a new version and migration of liquidity.
 
 ## License
 
-MIT
+MIT License
