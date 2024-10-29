@@ -129,6 +129,14 @@ contract Exchano is ReentrancyGuard, Ownable2Step, Pausable {
         feeRate = _feeRate;
     }
 
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     /**
      * @notice Updates LP token holder shares in the fee collector
      * @param pool Pool to update shares for
@@ -381,6 +389,7 @@ contract Exchano is ReentrancyGuard, Ownable2Step, Pausable {
         if (_totalSupply == 0) {
             liquidityShare = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             pool.lpToken.mint(address(1), MINIMUM_LIQUIDITY); // Lock minimum liquidity
+            _totalSupply = MINIMUM_LIQUIDITY; // Update total supply to include minimum liquidity
         } else {
             liquidityShare = Math.min(
                 (amount0 * _totalSupply) / pool.tokenABalance,
@@ -395,9 +404,14 @@ contract Exchano is ReentrancyGuard, Ownable2Step, Pausable {
         pool.tokenABalance += amount0;
         pool.tokenBBalance += amount1;
         pool.lastBlockUpdated = block.number;
-        
 
         pool.lpToken.mint(msg.sender, liquidityShare);
+
+        // Calculate share with updated total supply
+        uint256 userShare = (liquidityShare * BASIS_POINTS) / (liquidityShare + _totalSupply);
+
+        IFeeCollector(feeCollector).updateUserShare(msg.sender, token0, userShare);
+        IFeeCollector(feeCollector).updateUserShare(msg.sender, token1, userShare);
 
         emit LiquidityAdded(msg.sender, token0, token1, amount0, amount1, liquidityShare);
 
